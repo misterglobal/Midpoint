@@ -421,7 +421,8 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:3000/midpoint';
+        const urlParams = new URLSearchParams(window.location.search);
+        const API_URL = urlParams.get('apiUrl') || window.API_URL || '/midpoint';
 
         async function findCafes() {
             const address1 = document.getElementById('address1').value.trim();
