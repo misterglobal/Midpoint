@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeConnect - Find Meeting Cafes</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        @media (max-width: 900px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .form-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-section h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="number"] {
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        button {
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .results-section {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .results-section h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .result-content {
+            display: none;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .result-content.show {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 4px solid #c33;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .midpoint-card {
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 2px solid #667eea;
+        }
+
+        .midpoint-card h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .coordinate {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .coordinate-value {
+            background: white;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .cafes-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .cafe-card {
+            background: #f8f9fa;
+            padding: 14px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .cafe-card:hover {
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .cafe-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+
+        .cafe-info {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .rating {
+            color: #ff9800;
+            font-weight: 600;
+        }
+
+        .price-level {
+            display: inline-block;
+            color: #667eea;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .status {
+            margin-top: 6px;
+            font-size: 12px;
+        }
+
+        .open {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .closed {
+            color: #dc3545;
+            font-weight: 600;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .cafes-count {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>☕ WeConnect</h1>
+            <p>Find the perfect café halfway between two locations</p>
+        </div>
+
+        <div class="content">
+            <!-- Form Section -->
+            <div class="form-section">
+                <h2>📍 Enter Locations</h2>
+                
+                <div class="form-group">
+                    <label for="address1">Address 1</label>
+                    <input 
+                        type="text" 
+                        id="address1" 
+                        placeholder="e.g., 123 Main St, New York, NY"
+                        value=""
+                    >
+                    <span class="help-text">Enter the first address</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="address2">Address 2</label>
+                    <input 
+                        type="text" 
+                        id="address2" 
+                        placeholder="e.g., 456 Park Ave, Boston, MA"
+                        value=""
+                    >
+                    <span class="help-text">Enter the second address</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="radius">Search Radius (meters)</label>
+                    <input 
+                        type="number" 
+                        id="radius" 
+                        placeholder="1500"
+                        value="1500"
+                        min="100"
+                        max="50000"
+                        step="100"
+                    >
+                    <span class="help-text">How far to search from midpoint (100-50000m)</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="maxResults">Max Results</label>
+                    <input 
+                        type="number" 
+                        id="maxResults" 
+                        placeholder="20"
+                        value="20"
+                        min="1"
+                        max="60"
+                        step="1"
+                    >
+                    <span class="help-text">Maximum number of cafés to display</span>
+                </div>
+
+                <button onclick="findCafes()" id="searchBtn">🔍 Find Cafés</button>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section">
+                <h2>📊 Results</h2>
+                
+                <div class="error" id="error"></div>
+
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Finding the perfect café...</p>
+                </div>
+
+                <div class="result-content" id="results">
+                    <div class="midpoint-card">
+                        <h3>Midpoint Location</h3>
+                        <div class="coordinate">
+                            <div>
+                                <strong>Latitude:</strong>
+                                <div class="coordinate-value" id="midLat">-</div>
+                            </div>
+                            <div>
+                                <strong>Longitude:</strong>
+                                <div class="coordinate-value" id="midLng">-</div>
+                            </div>
+                        </div>
+                        <div style="margin-top: 12px; font-size: 12px; color: #666;">
+                            <strong>Coordinates1:</strong> <span id="coord1" style="font-family: monospace;">-</span><br>
+                            <strong>Coordinates2:</strong> <span id="coord2" style="font-family: monospace;">-</span><br>
+                            <a id="mapLink" href="#" target="_blank" style="color: #667eea; text-decoration: none; margin-top: 8px; display: inline-block;">📍 View on Google Maps</a>
+                        </div>
+                    </div>
+
+                    <div id="cafesContainer">
+                        <div class="cafes-count" id="cafesCount">0 cafés found</div>
+                        <div class="cafes-list" id="cafesList"></div>
+                    </div>
+                </div>
+
+                <div class="no-results" id="noResults" style="display: none;">
+                    Results will appear here
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/midpoint';
+
+        async function findCafes() {
+            const address1 = document.getElementById('address1').value.trim();
+            const address2 = document.getElementById('address2').value.trim();
+            const radiusMeters = parseInt(document.getElementById('radius').value) || 1500;
+            const maxResults = parseInt(document.getElementById('maxResults').value) || 20;
+
+            // Validation
+            const errorEl = document.getElementById('error');
+            errorEl.classList.remove('show');
+            
+            if (!address1 || !address2) {
+                showError('Please enter both addresses');
+                return;
+            }
+
+            if (address1.length < 3 || address2.length < 3) {
+                showError('Addresses must be at least 3 characters long');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('results').classList.remove('show');
+            document.getElementById('noResults').style.display = 'none';
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        address1,
+                        address2,
+                        radiusMeters,
+                        maxResults,
+                    }),
+                });
+
+                console.log('Response status:', response.status);
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Error response:', errorData);
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Success response:', data);
+                displayResults(data);
+
+            } catch (err) {
+                console.error('Fetch error:', err);
+                showError(err.message || 'Failed to fetch results');
+            } finally {
+                document.getElementById('loading').classList.remove('show');
+            }
+        }
+
+        function displayResults(data) {
+            console.log('Displaying results:', data);
+            
+            // Update midpoint
+            document.getElementById('midLat').textContent = data.midpoint.lat.toFixed(6);
+            document.getElementById('midLng').textContent = data.midpoint.lng.toFixed(6);
+            document.getElementById('coord1').textContent = `${data.coordinates.address1.lat.toFixed(6)}, ${data.coordinates.address1.lng.toFixed(6)}`;
+            document.getElementById('coord2').textContent = `${data.coordinates.address2.lat.toFixed(6)}, ${data.coordinates.address2.lng.toFixed(6)}`;
+            
+            // Create Google Maps link
+            const mapsUrl = `https://www.google.com/maps/search/cafes/@${data.midpoint.lat},${data.midpoint.lng},14z`;
+            document.getElementById('mapLink').href = mapsUrl;
+
+            // Display cafés
+            const cafesList = document.getElementById('cafesList');
+            const cafesCount = document.getElementById('cafesCount');
+
+            if (!data.cafes || data.cafes.length === 0) {
+                console.log('No cafes found');
+                cafesCount.textContent = '❌ No cafés found in this area';
+                cafesList.innerHTML = `
+                    <div style="background: #fff3cd; padding: 12px; border-radius: 6px; border-left: 4px solid #ffc107; color: #856404; font-size: 13px; line-height: 1.5;">
+                        <strong>No Results:</strong> The search location may be too remote (e.g., ocean, rural area), or Google Places doesn't have café data there. Try searching with locations that are closer together.
+                    </div>
+                `;
+                document.getElementById('results').classList.add('show');
+                return;
+            }
+
+            console.log(`Found ${data.cafes.length} cafes`);
+            cafesCount.textContent = `${data.cafes.length} cafés found`;
+            
+            const cafesHTML = data.cafes.map(cafe => {
+                console.log('Processing cafe:', cafe.name);
+                return `
+                <div class="cafe-card">
+                    <div class="cafe-name">${escapeHtml(cafe.name)}</div>
+                    <div class="cafe-info">
+                        <div>
+                            ${cafe.rating ? `<span class="rating">⭐ ${cafe.rating}</span> (${cafe.user_ratings_total || 0} reviews)` : '<span class="rating">No rating yet</span>'}
+                            ${cafe.price_level ? `<span class="price-level">${'$'.repeat(cafe.price_level)}</span>` : ''}
+                        </div>
+                        <div style="margin-top: 6px;">📍 ${escapeHtml(cafe.address)}</div>
+                        ${cafe.open_now !== undefined ? `
+                            <div class="status">
+                                Status: <span class="${cafe.open_now ? 'open' : 'closed'}">
+                                    ${cafe.open_now ? '✓ Open' : '✗ Closed'}
+                                </span>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `}).join('');
+            
+            cafesList.innerHTML = cafesHTML;
+            document.getElementById('results').classList.add('show');
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = '⚠️ ' + message;
+            errorEl.classList.add('show');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('address1').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') document.getElementById('address2').focus();
+        });
+
+        document.getElementById('address2').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') findCafes();
+        });
+    </script>
+</body>
+</html>
