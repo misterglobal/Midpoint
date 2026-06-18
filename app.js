@@ -1,10 +1,11 @@
 /*
   Express API server exposing POST /midpoint
-  - Accepts JSON body: { address1: string, address2: string }
-  - Uses Google Maps Geocoding API to geocode both addresses
-  - Calculates geographic midpoint
-  - Uses Google Places Nearby Search to find cafes near the midpoint
-  - Returns JSON with midpoint and list of cafes
+  - Accepts JSON body: { locations: string[], travelModes?: string[], venueType?: string }
+  - Also supports legacy { address1: string, address2: string }
+  - Geocodes all locations and calculates a geographic center
+  - Uses Google Places Nearby Search to find venues near the center
+  - Optionally enriches venues with Routes API travel-time matrix data
+  - Returns scored venue recommendations with fairness, quality, safety, and parking signals
 
   Setup:
     1) Install dependencies:
@@ -41,6 +42,8 @@ const MIN_RESULTS = 1;
 const MAX_RESULTS = 60;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 30;
+const SUPPORTED_TRAVEL_MODES = new Set(['driving', 'transit', 'walking']);
+const ROUTES_API_URL = 'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix';
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
@@ -132,11 +135,37 @@ function normalizeAddress(value, fieldName) {
 }
 
 function validateSearchRequest(body = {}) {
+  const locations = Array.isArray(body.locations)
+    ? body.locations
+    : [body.address1, body.address2].filter((value) => value !== undefined);
+  const normalizedLocations = locations.map((location, index) => (
+    normalizeAddress(location, `Location ${index + 1}`)
+  ));
+
+  if (normalizedLocations.length < 2) {
+    throw new AppError('At least two locations are required.', 400);
+  }
+
+  if (normalizedLocations.length > 10) {
+    throw new AppError('A maximum of 10 locations is supported per search.', 400);
+  }
+
+  const travelModes = Array.isArray(body.travelModes)
+    ? body.travelModes.map((mode) => String(mode).toLowerCase())
+    : ['driving'];
+  const normalizedTravelModes = [...new Set(travelModes)]
+    .filter((mode) => SUPPORTED_TRAVEL_MODES.has(mode));
+
   return {
-    address1: normalizeAddress(body.address1, 'Address 1'),
-    address2: normalizeAddress(body.address2, 'Address 2'),
+    locations: normalizedLocations,
+    address1: normalizedLocations[0],
+    address2: normalizedLocations[1],
     radiusMeters: clampNumber(body.radiusMeters, DEFAULT_RADIUS_METERS, MIN_RADIUS_METERS, MAX_RADIUS_METERS),
     maxResults: clampNumber(body.maxResults, DEFAULT_MAX_RESULTS, MIN_RESULTS, MAX_RESULTS),
+    venueType: typeof body.venueType === 'string' && body.venueType.trim()
+      ? body.venueType.trim().toLowerCase()
+      : 'cafe',
+    travelModes: normalizedTravelModes.length > 0 ? normalizedTravelModes : ['driving'],
   };
 }
 
@@ -204,6 +233,40 @@ function computeMidpoint(coord1, coord2) {
   return { lat: toDeg(lat3), lng: toDeg(lon3) };
 }
 
+function computeGeographicCenter(coords) {
+  const validCoords = coords.filter(isFiniteCoord);
+  if (validCoords.length === 0) {
+    return null;
+  }
+
+  if (validCoords.length === 2) {
+    return computeMidpoint(validCoords[0], validCoords[1]);
+  }
+
+  const totals = validCoords.reduce((acc, coord) => {
+    const lat = (coord.lat * Math.PI) / 180;
+    const lng = (coord.lng * Math.PI) / 180;
+
+    acc.x += Math.cos(lat) * Math.cos(lng);
+    acc.y += Math.cos(lat) * Math.sin(lng);
+    acc.z += Math.sin(lat);
+    return acc;
+  }, { x: 0, y: 0, z: 0 });
+
+  const count = validCoords.length;
+  const x = totals.x / count;
+  const y = totals.y / count;
+  const z = totals.z / count;
+  const lng = Math.atan2(y, x);
+  const hyp = Math.sqrt((x * x) + (y * y));
+  const lat = Math.atan2(z, hyp);
+
+  return {
+    lat: (lat * 180) / Math.PI,
+    lng: (lng * 180) / Math.PI,
+  };
+}
+
 function computeDistanceMeters(coord1, coord2) {
   if (!isFiniteCoord(coord1) || !isFiniteCoord(coord2)) {
     return null;
@@ -232,16 +295,20 @@ function roundScore(value) {
 }
 
 function computeFairnessScore(distanceFromAddress1Meters, distanceFromAddress2Meters) {
-  if (!Number.isFinite(distanceFromAddress1Meters) || !Number.isFinite(distanceFromAddress2Meters)) {
+  const distances = Array.isArray(distanceFromAddress1Meters)
+    ? distanceFromAddress1Meters.filter(Number.isFinite)
+    : [distanceFromAddress1Meters, distanceFromAddress2Meters].filter(Number.isFinite);
+
+  if (distances.length < 2) {
     return null;
   }
 
-  const fartherDistance = Math.max(distanceFromAddress1Meters, distanceFromAddress2Meters);
+  const fartherDistance = Math.max(...distances);
   if (fartherDistance === 0) {
     return 1;
   }
 
-  const imbalanceMeters = Math.abs(distanceFromAddress1Meters - distanceFromAddress2Meters);
+  const imbalanceMeters = Math.max(...distances) - Math.min(...distances);
   return roundScore(Math.max(0, 1 - (imbalanceMeters / fartherDistance)));
 }
 
@@ -262,6 +329,81 @@ function computeMeetingScore({ fairnessScore, qualityScore, distanceMeters, radi
   const normalizedFairness = Number.isFinite(fairnessScore) ? fairnessScore : 0.5;
 
   return roundScore((normalizedFairness * 0.45) + (qualityScore * 0.35) + (distanceScore * 0.20));
+}
+
+function computeTravelScore(travelSummary) {
+  const modeSummaries = Object.values(travelSummary || {})
+    .filter((summary) => Number.isFinite(summary.fairnessScore));
+
+  if (modeSummaries.length === 0) {
+    return null;
+  }
+
+  const total = modeSummaries.reduce((sum, summary) => sum + summary.fairnessScore, 0);
+  return roundScore(total / modeSummaries.length);
+}
+
+function computeFullMeetingScore({ fairnessScore, qualityScore, distanceMeters, radiusMeters, travelScore, safetyScore, parkingScore }) {
+  const distanceScore = Number.isFinite(distanceMeters)
+    ? Math.max(0, 1 - (distanceMeters / Math.max(radiusMeters, 1)))
+    : 0.5;
+  const normalizedFairness = Number.isFinite(travelScore)
+    ? travelScore
+    : Number.isFinite(fairnessScore)
+      ? fairnessScore
+      : 0.5;
+  const normalizedSafety = Number.isFinite(safetyScore) ? safetyScore : 0.6;
+  const normalizedParking = Number.isFinite(parkingScore) ? parkingScore : 0.5;
+
+  return roundScore(
+    (normalizedFairness * 0.35)
+    + (qualityScore * 0.25)
+    + (distanceScore * 0.15)
+    + (normalizedSafety * 0.15)
+    + (normalizedParking * 0.10)
+  );
+}
+
+function computeSafetySignal(cafe) {
+  let score = 0.62;
+  const types = Array.isArray(cafe.types) ? cafe.types : [];
+
+  if (Number(cafe.rating) >= 4.3 && (Number(cafe.user_ratings_total) || 0) >= 50) {
+    score += 0.12;
+  }
+  if (cafe.open_now === true) {
+    score += 0.06;
+  }
+  if (types.some((type) => ['shopping_mall', 'store', 'restaurant', 'cafe'].includes(type))) {
+    score += 0.05;
+  }
+
+  return {
+    score: roundScore(Math.min(score, 1)),
+    confidence: 'estimated',
+    factors: ['venue popularity', 'public place type', 'available Google place metadata'],
+  };
+}
+
+function computeParkingSignal(cafe) {
+  const text = `${cafe.name || ''} ${cafe.address || ''}`.toLowerCase();
+  const types = Array.isArray(cafe.types) ? cafe.types : [];
+  let score = 0.45;
+
+  if (text.includes('parking') || text.includes('plaza') || text.includes('mall')) {
+    score += 0.2;
+  }
+  if (types.includes('shopping_mall')) {
+    score += 0.2;
+  }
+  if (types.includes('cafe') || types.includes('restaurant')) {
+    score += 0.05;
+  }
+
+  return {
+    score: roundScore(Math.min(score, 1)),
+    confidence: score >= 0.65 ? 'estimated' : 'limited',
+  };
 }
 
 function buildPlaceExplanation(cafe) {
@@ -289,6 +431,14 @@ function buildPlaceExplanation(cafe) {
     reasons.push('currently open');
   }
 
+  if (Number.isFinite(cafe.travelScore) && cafe.travelScore >= 0.85) {
+    reasons.push('balanced by travel time');
+  }
+
+  if (cafe.parking?.score >= 0.65) {
+    reasons.push('likely easier for parking');
+  }
+
   if (reasons.length === 0) {
     return 'A nearby cafe candidate around the midpoint.';
   }
@@ -311,7 +461,7 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
     key: GOOGLE_MAPS_API_KEY,
     location: `${lat},${lng}`,
     radius: radiusMeters,
-    type: 'cafe',
+    type: startCoordinates.venueType || 'cafe',
     // rankby cannot be used with radius when set to distance; we keep radius to constrain area
   };
 
@@ -325,12 +475,15 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
     .map((r) => {
       const location = r.geometry?.location;
       const distanceMeters = computeDistanceMeters(midpoint, location);
-      const distanceFromAddress1Meters = computeDistanceMeters(startCoordinates.address1, location);
-      const distanceFromAddress2Meters = computeDistanceMeters(startCoordinates.address2, location);
-      const imbalanceMeters = Number.isFinite(distanceFromAddress1Meters) && Number.isFinite(distanceFromAddress2Meters)
-        ? Math.abs(distanceFromAddress1Meters - distanceFromAddress2Meters)
+      const participantDistancesMeters = (startCoordinates.locations || [startCoordinates.address1, startCoordinates.address2])
+        .map((coord) => computeDistanceMeters(coord, location));
+      const validParticipantDistances = participantDistancesMeters.filter(Number.isFinite);
+      const distanceFromAddress1Meters = participantDistancesMeters[0] ?? null;
+      const distanceFromAddress2Meters = participantDistancesMeters[1] ?? null;
+      const imbalanceMeters = validParticipantDistances.length >= 2
+        ? Math.max(...validParticipantDistances) - Math.min(...validParticipantDistances)
         : null;
-      const fairnessScore = computeFairnessScore(distanceFromAddress1Meters, distanceFromAddress2Meters);
+      const fairnessScore = computeFairnessScore(participantDistancesMeters);
 
       const cafe = {
         place_id: r.place_id,
@@ -340,22 +493,25 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
         price_level: r.price_level,
         address: r.vicinity || r.formatted_address,
         location,
+        radiusMeters,
         distanceMeters,
         distanceFromAddress1Meters,
         distanceFromAddress2Meters,
+        participantDistancesMeters,
         imbalanceMeters,
         fairnessScore,
         open_now: r.opening_hours?.open_now,
         types: r.types,
       };
       cafe.qualityScore = computeQualityScore(cafe);
+      cafe.safety = computeSafetySignal(cafe);
+      cafe.parking = computeParkingSignal(cafe);
       cafe.meetingScore = computeMeetingScore({
         fairnessScore: cafe.fairnessScore,
         qualityScore: cafe.qualityScore,
         distanceMeters: cafe.distanceMeters,
         radiusMeters,
       });
-      cafe.whyThisPlace = buildPlaceExplanation(cafe);
 
       return cafe;
     })
@@ -376,28 +532,186 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
   return results;
 }
 
+async function enrichCafesWithTravel(cafes, origins, travelModes) {
+  if (!GOOGLE_MAPS_API_KEY || cafes.length === 0 || origins.length === 0 || travelModes.length === 0) {
+    return cafes;
+  }
+
+  const destinationCafes = cafes.filter((cafe) => isFiniteCoord(cafe.location));
+  const destinations = destinationCafes.map((cafe) => cafe.location);
+
+  if (destinations.length === 0) {
+    return cafes;
+  }
+
+  for (const travelMode of travelModes) {
+    const elementCount = origins.length * destinations.length;
+    const maxElements = travelMode === 'transit' ? 100 : 100;
+    if (elementCount > maxElements) {
+      cafes.forEach((cafe) => {
+        cafe.travel = cafe.travel || {};
+        cafe.travel[travelMode] = {
+          available: false,
+          reason: `Route matrix skipped because ${elementCount} route elements exceeds the ${maxElements} element limit for this mode.`,
+        };
+      });
+      continue;
+    }
+
+    try {
+      const matrix = await getRouteMatrix(origins, destinations, travelMode);
+      applyRouteMatrix(destinationCafes, matrix, travelMode);
+    } catch (err) {
+      cafes.forEach((cafe) => {
+        cafe.travel = cafe.travel || {};
+        cafe.travel[travelMode] = {
+          available: false,
+          reason: 'Route matrix unavailable for this search.',
+        };
+      });
+    }
+  }
+
+  cafes.forEach((cafe) => {
+    cafe.travelScore = computeTravelScore(cafe.travel);
+    cafe.meetingScore = computeFullMeetingScore({
+      fairnessScore: cafe.fairnessScore,
+      qualityScore: cafe.qualityScore,
+      distanceMeters: cafe.distanceMeters,
+      radiusMeters: cafe.radiusMeters || DEFAULT_RADIUS_METERS,
+      travelScore: cafe.travelScore,
+      safetyScore: cafe.safety?.score,
+      parkingScore: cafe.parking?.score,
+    });
+    cafe.whyThisPlace = buildPlaceExplanation(cafe);
+  });
+
+  return cafes.sort((a, b) => b.meetingScore - a.meetingScore);
+}
+
+async function getRouteMatrix(origins, destinations, travelMode) {
+  const modeMap = {
+    driving: 'DRIVE',
+    transit: 'TRANSIT',
+    walking: 'WALK',
+  };
+  const routingPreference = travelMode === 'driving' ? 'TRAFFIC_AWARE' : undefined;
+  const body = {
+    origins: origins.map((coord) => routeWaypoint(coord)),
+    destinations: destinations.map((coord) => routeWaypoint(coord)),
+    travelMode: modeMap[travelMode],
+  };
+
+  if (routingPreference) {
+    body.routingPreference = routingPreference;
+  }
+
+  const resp = await axios.post(ROUTES_API_URL, body, {
+    timeout: GOOGLE_REQUEST_TIMEOUT_MS,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+      'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,status,condition',
+    },
+  });
+
+  return Array.isArray(resp.data) ? resp.data : [];
+}
+
+function routeWaypoint(coord) {
+  return {
+    waypoint: {
+      location: {
+        latLng: {
+          latitude: coord.lat,
+          longitude: coord.lng,
+        },
+      },
+    },
+  };
+}
+
+function applyRouteMatrix(cafes, matrix, travelMode) {
+  const byDestination = new Map();
+
+  matrix.forEach((element) => {
+    if (element.condition !== 'ROUTE_EXISTS' || element.status?.code) {
+      return;
+    }
+
+    const destinationIndex = element.destinationIndex;
+    const existing = byDestination.get(destinationIndex) || [];
+    existing[element.originIndex] = {
+      durationSeconds: parseDurationSeconds(element.duration),
+      distanceMeters: element.distanceMeters,
+    };
+    byDestination.set(destinationIndex, existing);
+  });
+
+  cafes.forEach((cafe, destinationIndex) => {
+    const routes = byDestination.get(destinationIndex) || [];
+    const durations = routes.map((route) => route?.durationSeconds).filter(Number.isFinite);
+    const distances = routes.map((route) => route?.distanceMeters).filter(Number.isFinite);
+    cafe.travel = cafe.travel || {};
+
+    if (durations.length < 2) {
+      cafe.travel[travelMode] = {
+        available: false,
+        reason: 'Not enough routes were available to score this travel mode.',
+      };
+      return;
+    }
+
+    cafe.travel[travelMode] = {
+      available: true,
+      routes,
+      averageDurationSeconds: Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length),
+      maxDurationSeconds: Math.max(...durations),
+      minDurationSeconds: Math.min(...durations),
+      imbalanceSeconds: Math.max(...durations) - Math.min(...durations),
+      averageDistanceMeters: distances.length > 0
+        ? Math.round(distances.reduce((sum, value) => sum + value, 0) / distances.length)
+        : null,
+      fairnessScore: computeFairnessScore(durations),
+    };
+  });
+}
+
+function parseDurationSeconds(duration) {
+  if (typeof duration !== 'string') {
+    return null;
+  }
+
+  const match = duration.match(/^(\d+)s$/);
+  return match ? Number(match[1]) : null;
+}
+
 app.post('/midpoint', async (req, res) => {
   try {
-    const { address1, address2, radiusMeters, maxResults } = validateSearchRequest(req.body);
+    const { locations, address1, address2, radiusMeters, maxResults, venueType, travelModes } = validateSearchRequest(req.body);
 
-    const [coord1, coord2] = await Promise.all([
-      geocodeAddress(address1),
-      geocodeAddress(address2),
-    ]);
+    const coordinatesList = await Promise.all(locations.map((location) => geocodeAddress(location)));
+    const coord1 = coordinatesList[0];
+    const coord2 = coordinatesList[1];
 
-    const midpoint = computeMidpoint(coord1, coord2);
+    const midpoint = computeGeographicCenter(coordinatesList);
 
-    const cafes = await findNearbyCafes(
+    const cafes = await enrichCafesWithTravel(await findNearbyCafes(
       midpoint,
       radiusMeters,
       maxResults,
-      { address1: coord1, address2: coord2 }
-    );
+      { address1: coord1, address2: coord2, locations: coordinatesList, venueType }
+    ), coordinatesList, travelModes);
 
     return res.json({
-      input: { address1, address2 },
-      options: { radiusMeters, maxResults },
+      input: { address1, address2, locations },
+      options: { radiusMeters, maxResults, venueType, travelModes },
       coordinates: { address1: coord1, address2: coord2 },
+      participants: locations.map((location, index) => ({
+        label: `Location ${index + 1}`,
+        address: location,
+        coordinates: coordinatesList[index],
+      })),
       midpoint,
       cafes,
     });
@@ -430,7 +744,9 @@ module.exports = {
   clampNumber,
   computeFairnessScore,
   computeDistanceMeters,
+  computeGeographicCenter,
   computeMidpoint,
+  computeFullMeetingScore,
   computeQualityScore,
   computeMeetingScore,
   validateSearchRequest,

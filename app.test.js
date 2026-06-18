@@ -5,6 +5,8 @@ const {
   clampNumber,
   computeFairnessScore,
   computeDistanceMeters,
+  computeFullMeetingScore,
+  computeGeographicCenter,
   computeMidpoint,
   computeMeetingScore,
   computeQualityScore,
@@ -23,12 +25,25 @@ test('validateSearchRequest normalizes addresses and clamps numeric options', ()
   assert.equal(result.address2, '456 Park Ave');
   assert.equal(result.radiusMeters, 50000);
   assert.equal(result.maxResults, 60);
+  assert.deepEqual(result.travelModes, ['driving']);
+});
+
+test('validateSearchRequest accepts two or more locations and travel modes', () => {
+  const result = validateSearchRequest({
+    locations: [' Toronto, ON ', ' Mississauga, ON ', ' Markham, ON '],
+    travelModes: ['driving', 'transit', 'flying', 'walking'],
+    venueType: ' Restaurant ',
+  });
+
+  assert.deepEqual(result.locations, ['Toronto, ON', 'Mississauga, ON', 'Markham, ON']);
+  assert.deepEqual(result.travelModes, ['driving', 'transit', 'walking']);
+  assert.equal(result.venueType, 'restaurant');
 });
 
 test('validateSearchRequest rejects short addresses', () => {
   assert.throws(
     () => validateSearchRequest({ address1: 'A', address2: '456 Park Ave' }),
-    /Address 1 must be at least 3 characters long/
+    /Location 1 must be at least 3 characters long/
   );
 });
 
@@ -46,6 +61,19 @@ test('computeMidpoint returns the midpoint between nearby coordinates', () => {
 
   assert.ok(Math.abs(midpoint.lat - 41.545) < 0.1);
   assert.ok(Math.abs(midpoint.lng - -72.550) < 0.1);
+});
+
+test('computeGeographicCenter supports more than two coordinates', () => {
+  const center = computeGeographicCenter([
+    { lat: 43.6532, lng: -79.3832 },
+    { lat: 43.5890, lng: -79.6441 },
+    { lat: 43.8561, lng: -79.3370 },
+  ]);
+
+  assert.ok(center.lat > 43.6);
+  assert.ok(center.lat < 43.8);
+  assert.ok(center.lng < -79.3);
+  assert.ok(center.lng > -79.6);
 });
 
 test('computeDistanceMeters returns geographic distance in meters', () => {
@@ -93,6 +121,29 @@ test('computeMeetingScore balances fairness, quality, and midpoint distance', ()
   const weaker = computeMeetingScore({
     fairnessScore: 0.55,
     qualityScore: 0.6,
+    distanceMeters: 900,
+    radiusMeters: 1000,
+  });
+
+  assert.ok(stronger > weaker);
+});
+
+test('computeFullMeetingScore includes travel, safety, and parking signals', () => {
+  const stronger = computeFullMeetingScore({
+    fairnessScore: 0.7,
+    qualityScore: 0.9,
+    travelScore: 0.95,
+    safetyScore: 0.9,
+    parkingScore: 0.8,
+    distanceMeters: 100,
+    radiusMeters: 1000,
+  });
+  const weaker = computeFullMeetingScore({
+    fairnessScore: 0.7,
+    qualityScore: 0.5,
+    travelScore: 0.45,
+    safetyScore: 0.4,
+    parkingScore: 0.3,
     distanceMeters: 900,
     radiusMeters: 1000,
   });

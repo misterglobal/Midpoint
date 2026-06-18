@@ -77,6 +77,50 @@
             flex-direction: column;
         }
 
+        .location-row {
+            align-items: center;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .remove-location {
+            aspect-ratio: 1;
+            border-radius: 6px;
+            font-size: 18px;
+            line-height: 1;
+            margin-top: 0;
+            padding: 0;
+            width: 42px;
+        }
+
+        .secondary-button {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            color: #333;
+            margin-top: 0;
+        }
+
+        .mode-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .mode-option {
+            align-items: center;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            display: inline-flex;
+            gap: 8px;
+            padding: 9px 10px;
+        }
+
+        .mode-option input {
+            accent-color: #667eea;
+        }
+
         label {
             font-weight: 600;
             margin-bottom: 6px;
@@ -85,7 +129,8 @@
         }
 
         input[type="text"],
-        input[type="number"] {
+        input[type="number"],
+        select {
             padding: 12px;
             border: 1px solid #ddd;
             border-radius: 6px;
@@ -94,7 +139,8 @@
         }
 
         input[type="text"]:focus,
-        input[type="number"]:focus {
+        input[type="number"]:focus,
+        select:focus {
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
@@ -325,6 +371,16 @@
             margin-top: 6px;
         }
 
+        .signal-grid {
+            display: grid;
+            gap: 5px;
+            margin-top: 8px;
+        }
+
+        .signal-line {
+            color: #555;
+        }
+
         .open {
             color: #28a745;
             font-weight: 600;
@@ -371,25 +427,32 @@
                 <h2>Enter Locations</h2>
 
                 <div class="form-group">
-                    <label for="address1">Address 1</label>
-                    <input
-                        type="text"
-                        id="address1"
-                        placeholder="e.g., 123 Main St, New York, NY"
-                        autocomplete="street-address"
-                    >
-                    <span class="help-text">Enter the first address</span>
+                    <label>Locations</label>
+                    <div id="locationsList"></div>
+                    <button type="button" class="secondary-button" onclick="addLocation()">Add Location</button>
+                    <span class="help-text">Add two or more starting locations</span>
                 </div>
 
                 <div class="form-group">
-                    <label for="address2">Address 2</label>
-                    <input
-                        type="text"
-                        id="address2"
-                        placeholder="e.g., 456 Park Ave, Boston, MA"
-                        autocomplete="street-address"
-                    >
-                    <span class="help-text">Enter the second address</span>
+                    <label for="venueType">Venue Type</label>
+                    <select id="venueType">
+                        <option value="cafe">Cafe</option>
+                        <option value="restaurant">Restaurant</option>
+                        <option value="library">Library</option>
+                        <option value="bar">Bar</option>
+                        <option value="park">Park</option>
+                    </select>
+                    <span class="help-text">What kind of meeting place to search for</span>
+                </div>
+
+                <div class="form-group">
+                    <label>Travel Modes</label>
+                    <div class="mode-group">
+                        <label class="mode-option"><input type="checkbox" name="travelMode" value="driving" checked> Driving</label>
+                        <label class="mode-option"><input type="checkbox" name="travelMode" value="transit"> Transit</label>
+                        <label class="mode-option"><input type="checkbox" name="travelMode" value="walking"> Walking</label>
+                    </div>
+                    <span class="help-text">Driving uses traffic-aware route estimates when available</span>
                 </div>
 
                 <div class="form-group">
@@ -447,8 +510,7 @@
                             </div>
                         </div>
                         <div class="detail-line">
-                            <strong>Coordinates 1:</strong> <span id="coord1">-</span><br>
-                            <strong>Coordinates 2:</strong> <span id="coord2">-</span><br>
+                            <div id="participantsCoords"></div>
                             <a id="mapLink" class="map-link" href="#" target="_blank" rel="noopener noreferrer">View on Google Maps</a>
                         </div>
                     </div>
@@ -472,30 +534,40 @@
         const urlParams = new URLSearchParams(window.location.search);
         const API_URL = urlParams.get('apiUrl') || window.API_URL;
         const searchBtn = document.getElementById('searchBtn');
+        const locationsList = document.getElementById('locationsList');
 
         if (!API_URL) {
             showError('The API URL is missing. Set window.API_URL in config.js or pass ?apiUrl=...');
         }
+
+        addLocation('e.g., 123 Main St, New York, NY');
+        addLocation('e.g., 456 Park Ave, Boston, MA');
 
         async function findCafes() {
             if (!API_URL || searchBtn.disabled) {
                 return;
             }
 
-            const address1 = document.getElementById('address1').value.trim();
-            const address2 = document.getElementById('address2').value.trim();
+            const locations = getLocations();
+            const travelModes = getTravelModes();
+            const venueType = document.getElementById('venueType').value;
             const radiusMeters = readBoundedNumber('radius', 1500, 100, 50000);
             const maxResults = readBoundedNumber('maxResults', 20, 1, 60);
 
             hideError();
 
-            if (!address1 || !address2) {
-                showError('Please enter both addresses.');
+            if (locations.length < 2) {
+                showError('Please enter at least two locations.');
                 return;
             }
 
-            if (address1.length < 3 || address2.length < 3) {
-                showError('Addresses must be at least 3 characters long.');
+            if (locations.some((location) => location.length < 3)) {
+                showError('Locations must be at least 3 characters long.');
+                return;
+            }
+
+            if (travelModes.length === 0) {
+                showError('Please choose at least one travel mode.');
                 return;
             }
 
@@ -511,8 +583,9 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        address1,
-                        address2,
+                        locations,
+                        travelModes,
+                        venueType,
                         radiusMeters,
                         maxResults,
                     }),
@@ -546,8 +619,7 @@
 
             document.getElementById('midLat').textContent = formatCoord(data.midpoint.lat);
             document.getElementById('midLng').textContent = formatCoord(data.midpoint.lng);
-            document.getElementById('coord1').textContent = `${formatCoord(data.coordinates.address1.lat)}, ${formatCoord(data.coordinates.address1.lng)}`;
-            document.getElementById('coord2').textContent = `${formatCoord(data.coordinates.address2.lat)}, ${formatCoord(data.coordinates.address2.lng)}`;
+            document.getElementById('participantsCoords').innerHTML = renderParticipantCoords(data);
 
             const mapsUrl = `https://www.google.com/maps/search/cafes/@${data.midpoint.lat},${data.midpoint.lng},14z`;
             document.getElementById('mapLink').href = mapsUrl;
@@ -584,6 +656,7 @@
             const rating = Number.isFinite(Number(cafe.rating))
                 ? `<span class="rating">Rating ${escapeHtml(String(cafe.rating))}</span> (${Number(cafe.user_ratings_total) || 0} reviews)`
                 : '<span class="rating">No rating yet</span>';
+            const signals = renderSignals(cafe);
             const priceLevel = Number.isInteger(cafe.price_level) && cafe.price_level > 0
                 ? `<span class="price-level">${'$'.repeat(Math.min(cafe.price_level, 4))}</span>`
                 : '';
@@ -605,11 +678,67 @@
                         ${scoreRow}
                         <div>${rating}${priceLevel}</div>
                         <div style="margin-top: 6px;">${address}</div>
+                        ${signals}
                         ${explanation}
                         ${status}
                     </div>
                 </div>
             `;
+        }
+
+        function renderParticipantCoords(data) {
+            const participants = Array.isArray(data.participants) && data.participants.length > 0
+                ? data.participants
+                : [
+                    { label: 'Location 1', coordinates: data.coordinates.address1 },
+                    { label: 'Location 2', coordinates: data.coordinates.address2 },
+                ];
+
+            return participants
+                .filter((participant) => isCoord(participant.coordinates))
+                .map((participant) => (
+                    `<strong>${escapeHtml(participant.label || 'Location')}:</strong> <span>${formatCoord(participant.coordinates.lat)}, ${formatCoord(participant.coordinates.lng)}</span>`
+                ))
+                .join('<br>');
+        }
+
+        function addLocation(placeholder = 'Enter another address') {
+            const row = document.createElement('div');
+            row.className = 'location-row';
+            row.innerHTML = `
+                <input
+                    type="text"
+                    class="location-input"
+                    placeholder="${escapeHtml(placeholder)}"
+                    autocomplete="street-address"
+                >
+                <button type="button" class="remove-location" aria-label="Remove location" onclick="removeLocation(this)">x</button>
+            `;
+            locationsList.appendChild(row);
+            updateRemoveButtons();
+        }
+
+        function removeLocation(button) {
+            button.closest('.location-row').remove();
+            updateRemoveButtons();
+        }
+
+        function updateRemoveButtons() {
+            const rows = locationsList.querySelectorAll('.location-row');
+            rows.forEach((row) => {
+                row.querySelector('.remove-location').disabled = rows.length <= 2;
+            });
+        }
+
+        function getLocations() {
+            return [...document.querySelectorAll('.location-input')]
+                .map((input) => input.value.trim())
+                .filter(Boolean);
+        }
+
+        function getTravelModes() {
+            return [...document.querySelectorAll('input[name="travelMode"]:checked')]
+                .map((input) => input.value);
         }
 
         function renderScores(cafe) {
@@ -626,6 +755,64 @@
             }
 
             return `<div class="score-row">${scores.join('')}</div>`;
+        }
+
+        function renderSignals(cafe) {
+            const lines = [];
+            const travel = renderTravel(cafe.travel);
+
+            if (travel) {
+                lines.push(travel);
+            }
+
+            if (cafe.safety && Number.isFinite(cafe.safety.score)) {
+                lines.push(`Safety ${Math.round(cafe.safety.score * 100)} (${escapeHtml(cafe.safety.confidence || 'estimated')})`);
+            }
+
+            if (cafe.parking && Number.isFinite(cafe.parking.score)) {
+                lines.push(`Parking ${Math.round(cafe.parking.score * 100)} (${escapeHtml(cafe.parking.confidence || 'limited')})`);
+            }
+
+            if (lines.length === 0) {
+                return '';
+            }
+
+            return `<div class="signal-grid">${lines.map((line) => `<div class="signal-line">${line}</div>`).join('')}</div>`;
+        }
+
+        function renderTravel(travel) {
+            if (!travel || typeof travel !== 'object') {
+                return '';
+            }
+
+            const summaries = Object.entries(travel)
+                .filter(([, summary]) => summary?.available)
+                .map(([mode, summary]) => {
+                    const avg = Number.isFinite(summary.averageDurationSeconds)
+                        ? formatDuration(summary.averageDurationSeconds)
+                        : 'unknown';
+                    const imbalance = Number.isFinite(summary.imbalanceSeconds)
+                        ? `, ${formatDuration(summary.imbalanceSeconds)} spread`
+                        : '';
+                    return `${capitalize(mode)} avg ${avg}${imbalance}`;
+                });
+
+            return summaries.join(' | ');
+        }
+
+        function formatDuration(seconds) {
+            const minutes = Math.round(seconds / 60);
+            if (minutes < 60) {
+                return `${minutes} min`;
+            }
+
+            const hours = Math.floor(minutes / 60);
+            const remaining = minutes % 60;
+            return remaining ? `${hours}h ${remaining}m` : `${hours}h`;
+        }
+
+        function capitalize(value) {
+            return value.charAt(0).toUpperCase() + value.slice(1);
         }
 
         async function readJsonResponse(response) {
@@ -702,14 +889,18 @@
             return div.innerHTML;
         }
 
-        document.getElementById('address1').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                document.getElementById('address2').focus();
+        locationsList.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || !e.target.classList.contains('location-input')) {
+                return;
             }
-        });
 
-        document.getElementById('address2').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            const inputs = [...document.querySelectorAll('.location-input')];
+            const currentIndex = inputs.indexOf(e.target);
+            const nextInput = inputs[currentIndex + 1];
+
+            if (nextInput) {
+                nextInput.focus();
+            } else {
                 findCafes();
             }
         });
