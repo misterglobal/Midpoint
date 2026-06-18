@@ -297,6 +297,34 @@
             font-size: 12px;
         }
 
+        .distance {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .score-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 8px 0;
+        }
+
+        .score-pill {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 999px;
+            color: #333;
+            display: inline-flex;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 8px;
+        }
+
+        .why-place {
+            color: #555;
+            margin-top: 6px;
+        }
+
         .open {
             color: #28a745;
             font-weight: 600;
@@ -546,6 +574,13 @@
         function renderCafe(cafe) {
             const name = escapeHtml(cafe.name || 'Unnamed cafe');
             const address = escapeHtml(cafe.address || 'Address unavailable');
+            const distance = Number.isFinite(cafe.distanceMeters)
+                ? `<span class="distance">${formatDistance(cafe.distanceMeters)} from midpoint</span>`
+                : '';
+            const scoreRow = renderScores(cafe);
+            const explanation = cafe.whyThisPlace
+                ? `<div class="why-place">${escapeHtml(cafe.whyThisPlace)}</div>`
+                : '';
             const rating = Number.isFinite(Number(cafe.rating))
                 ? `<span class="rating">Rating ${escapeHtml(String(cafe.rating))}</span> (${Number(cafe.user_ratings_total) || 0} reviews)`
                 : '<span class="rating">No rating yet</span>';
@@ -566,12 +601,31 @@
                 <div class="cafe-card">
                     <div class="cafe-name">${name}</div>
                     <div class="cafe-info">
+                        ${distance ? `<div>${distance}</div>` : ''}
+                        ${scoreRow}
                         <div>${rating}${priceLevel}</div>
                         <div style="margin-top: 6px;">${address}</div>
+                        ${explanation}
                         ${status}
                     </div>
                 </div>
             `;
+        }
+
+        function renderScores(cafe) {
+            const scores = [
+                ['Meeting', cafe.meetingScore],
+                ['Fairness', cafe.fairnessScore],
+                ['Quality', cafe.qualityScore],
+            ]
+                .filter(([, score]) => Number.isFinite(score))
+                .map(([label, score]) => `<span class="score-pill">${label} ${Math.round(score * 100)}</span>`);
+
+            if (scores.length === 0) {
+                return '';
+            }
+
+            return `<div class="score-row">${scores.join('')}</div>`;
         }
 
         async function readJsonResponse(response) {
@@ -596,6 +650,14 @@
 
         function formatCoord(value) {
             return Number(value).toFixed(6);
+        }
+
+        function formatDistance(meters) {
+            if (meters >= 1000) {
+                return `${(meters / 1000).toFixed(1)} km`;
+            }
+
+            return `${Math.round(meters)} m`;
         }
 
         function readBoundedNumber(id, fallback, min, max) {

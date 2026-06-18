@@ -204,8 +204,108 @@ function computeMidpoint(coord1, coord2) {
   return { lat: toDeg(lat3), lng: toDeg(lon3) };
 }
 
+function computeDistanceMeters(coord1, coord2) {
+  if (!isFiniteCoord(coord1) || !isFiniteCoord(coord2)) {
+    return null;
+  }
+
+  const earthRadiusMeters = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(coord2.lat - coord1.lat);
+  const dLng = toRad(coord2.lng - coord1.lng);
+  const lat1 = toRad(coord1.lat);
+  const lat2 = toRad(coord2.lat);
+
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return Math.round(earthRadiusMeters * c);
+}
+
+function isFiniteCoord(value) {
+  return Number.isFinite(value?.lat) && Number.isFinite(value?.lng);
+}
+
+function roundScore(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function computeFairnessScore(distanceFromAddress1Meters, distanceFromAddress2Meters) {
+  if (!Number.isFinite(distanceFromAddress1Meters) || !Number.isFinite(distanceFromAddress2Meters)) {
+    return null;
+  }
+
+  const fartherDistance = Math.max(distanceFromAddress1Meters, distanceFromAddress2Meters);
+  if (fartherDistance === 0) {
+    return 1;
+  }
+
+  const imbalanceMeters = Math.abs(distanceFromAddress1Meters - distanceFromAddress2Meters);
+  return roundScore(Math.max(0, 1 - (imbalanceMeters / fartherDistance)));
+}
+
+function computeQualityScore(cafe) {
+  const rating = Number(cafe.rating);
+  const reviewCount = Number(cafe.user_ratings_total) || 0;
+  const ratingScore = Number.isFinite(rating) ? rating / 5 : 0.55;
+  const reviewScore = Math.min(Math.log10(reviewCount + 1) / 3, 1);
+  const openScore = cafe.open_now === true ? 1 : cafe.open_now === false ? 0.35 : 0.65;
+
+  return roundScore((ratingScore * 0.55) + (reviewScore * 0.25) + (openScore * 0.20));
+}
+
+function computeMeetingScore({ fairnessScore, qualityScore, distanceMeters, radiusMeters }) {
+  const distanceScore = Number.isFinite(distanceMeters)
+    ? Math.max(0, 1 - (distanceMeters / Math.max(radiusMeters, 1)))
+    : 0.5;
+  const normalizedFairness = Number.isFinite(fairnessScore) ? fairnessScore : 0.5;
+
+  return roundScore((normalizedFairness * 0.45) + (qualityScore * 0.35) + (distanceScore * 0.20));
+}
+
+function buildPlaceExplanation(cafe) {
+  const reasons = [];
+
+  if (Number.isFinite(cafe.distanceMeters)) {
+    reasons.push(`${formatDistanceText(cafe.distanceMeters)} from the midpoint`);
+  }
+
+  if (Number.isFinite(cafe.fairnessScore) && cafe.fairnessScore >= 0.9) {
+    reasons.push('very fair for both people');
+  } else if (Number.isFinite(cafe.fairnessScore) && cafe.fairnessScore >= 0.75) {
+    reasons.push('reasonably fair for both people');
+  }
+
+  if (Number(cafe.rating) >= 4.3) {
+    reasons.push('highly rated');
+  }
+
+  if ((Number(cafe.user_ratings_total) || 0) >= 100) {
+    reasons.push('well reviewed');
+  }
+
+  if (cafe.open_now === true) {
+    reasons.push('currently open');
+  }
+
+  if (reasons.length === 0) {
+    return 'A nearby cafe candidate around the midpoint.';
+  }
+
+  return `Recommended because it is ${reasons.join(', ')}.`;
+}
+
+function formatDistanceText(meters) {
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(1)} km`;
+  }
+
+  return `${Math.round(meters)} m`;
+}
+
 // Helper: find nearby cafes around a location using Places Nearby Search
-async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 20) {
+async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 20, startCoordinates = {}) {
   const url = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json';
   const params = {
     key: GOOGLE_MAPS_API_KEY,
@@ -220,17 +320,58 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
     throw mapGoogleStatus(resp.data.status, 'The cafe search failed. Please try again in a moment.');
   }
 
-  const results = (resp.data.results || []).slice(0, maxResults).map((r) => ({
-    place_id: r.place_id,
-    name: r.name,
-    rating: r.rating,
-    user_ratings_total: r.user_ratings_total,
-    price_level: r.price_level,
-    address: r.vicinity || r.formatted_address,
-    location: r.geometry?.location,
-    open_now: r.opening_hours?.open_now,
-    types: r.types,
-  }));
+  const midpoint = { lat, lng };
+  const results = (resp.data.results || [])
+    .map((r) => {
+      const location = r.geometry?.location;
+      const distanceMeters = computeDistanceMeters(midpoint, location);
+      const distanceFromAddress1Meters = computeDistanceMeters(startCoordinates.address1, location);
+      const distanceFromAddress2Meters = computeDistanceMeters(startCoordinates.address2, location);
+      const imbalanceMeters = Number.isFinite(distanceFromAddress1Meters) && Number.isFinite(distanceFromAddress2Meters)
+        ? Math.abs(distanceFromAddress1Meters - distanceFromAddress2Meters)
+        : null;
+      const fairnessScore = computeFairnessScore(distanceFromAddress1Meters, distanceFromAddress2Meters);
+
+      const cafe = {
+        place_id: r.place_id,
+        name: r.name,
+        rating: r.rating,
+        user_ratings_total: r.user_ratings_total,
+        price_level: r.price_level,
+        address: r.vicinity || r.formatted_address,
+        location,
+        distanceMeters,
+        distanceFromAddress1Meters,
+        distanceFromAddress2Meters,
+        imbalanceMeters,
+        fairnessScore,
+        open_now: r.opening_hours?.open_now,
+        types: r.types,
+      };
+      cafe.qualityScore = computeQualityScore(cafe);
+      cafe.meetingScore = computeMeetingScore({
+        fairnessScore: cafe.fairnessScore,
+        qualityScore: cafe.qualityScore,
+        distanceMeters: cafe.distanceMeters,
+        radiusMeters,
+      });
+      cafe.whyThisPlace = buildPlaceExplanation(cafe);
+
+      return cafe;
+    })
+    .sort((a, b) => {
+      if (b.meetingScore !== a.meetingScore) {
+        return b.meetingScore - a.meetingScore;
+      }
+      if (a.distanceMeters === null) {
+        return 1;
+      }
+      if (b.distanceMeters === null) {
+        return -1;
+      }
+      return a.distanceMeters - b.distanceMeters;
+    })
+    .slice(0, maxResults);
 
   return results;
 }
@@ -249,7 +390,8 @@ app.post('/midpoint', async (req, res) => {
     const cafes = await findNearbyCafes(
       midpoint,
       radiusMeters,
-      maxResults
+      maxResults,
+      { address1: coord1, address2: coord2 }
     );
 
     return res.json({
@@ -286,6 +428,10 @@ if (require.main === module) {
 module.exports = {
   app,
   clampNumber,
+  computeFairnessScore,
+  computeDistanceMeters,
   computeMidpoint,
+  computeQualityScore,
+  computeMeetingScore,
   validateSearchRequest,
 };
