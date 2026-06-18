@@ -12,6 +12,7 @@
        npm init -y && npm install express axios dotenv
     2) Create a .env file with:
        GOOGLE_MAPS_API_KEY=your_api_key_here
+       API_KEYS=comma,separated,client,keys
     3) Run:
        node app.js
 
@@ -23,6 +24,7 @@
 
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const axios = require('axios');
 const dotenv = require('dotenv');
 
@@ -44,6 +46,7 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 30;
 const SUPPORTED_TRAVEL_MODES = new Set(['driving', 'transit', 'walking']);
 const ROUTES_API_URL = 'https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix';
+const API_KEYS = getConfiguredApiKeys();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
@@ -51,6 +54,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
 
 if (!GOOGLE_MAPS_API_KEY) {
   console.warn('Warning: GOOGLE_MAPS_API_KEY is not set. Set it in a .env file.');
+}
+
+if (API_KEYS.length === 0) {
+  console.warn('Warning: no backend API keys configured. POST /midpoint is open.');
 }
 
 class AppError extends Error {
@@ -73,7 +80,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', allowedOrigin);
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization');
   res.header('Vary', 'Origin');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -82,6 +89,19 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '10kb' }));
+
+app.use((req, res, next) => {
+  if (req.path !== '/midpoint' || req.method !== 'POST' || API_KEYS.length === 0) {
+    return next();
+  }
+
+  const apiKey = getRequestApiKey(req);
+  if (!isAuthorizedApiKey(apiKey, API_KEYS)) {
+    return res.status(401).json({ error: 'Unauthorized. Provide a valid API key.' });
+  }
+
+  return next();
+});
 
 const rateLimitBuckets = new Map();
 
@@ -115,6 +135,47 @@ function clampNumber(value, fallback, min, max) {
     return fallback;
   }
   return Math.min(Math.max(Math.round(number), min), max);
+}
+
+function getConfiguredApiKeys() {
+  return [
+    process.env.API_KEYS,
+    process.env.API_KEY,
+    process.env.X_API_KEY,
+    process.env['X-API-Key'],
+  ]
+    .filter(Boolean)
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function getRequestApiKey(req) {
+  const authHeader = req.get('Authorization') || '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  return req.get('X-API-Key') || '';
+}
+
+function isAuthorizedApiKey(candidate, allowedKeys = API_KEYS) {
+  if (!candidate || allowedKeys.length === 0) {
+    return false;
+  }
+
+  return allowedKeys.some((allowedKey) => safeCompare(candidate, allowedKey));
+}
+
+function safeCompare(candidate, allowedKey) {
+  const candidateBuffer = Buffer.from(String(candidate));
+  const allowedBuffer = Buffer.from(String(allowedKey));
+
+  if (candidateBuffer.length !== allowedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(candidateBuffer, allowedBuffer);
 }
 
 function normalizeAddress(value, fieldName) {
@@ -749,5 +810,6 @@ module.exports = {
   computeFullMeetingScore,
   computeQualityScore,
   computeMeetingScore,
+  isAuthorizedApiKey,
   validateSearchRequest,
 };

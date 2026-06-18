@@ -533,6 +533,7 @@
         const REQUEST_TIMEOUT_MS = 12000;
         const urlParams = new URLSearchParams(window.location.search);
         const API_URL = urlParams.get('apiUrl') || window.API_URL;
+        const API_KEY = window.API_KEY || '';
         const searchBtn = document.getElementById('searchBtn');
         const locationsList = document.getElementById('locationsList');
 
@@ -579,9 +580,7 @@
             try {
                 const response = await fetch(API_URL, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: buildRequestHeaders(),
                     body: JSON.stringify({
                         locations,
                         travelModes,
@@ -739,6 +738,18 @@
         function getTravelModes() {
             return [...document.querySelectorAll('input[name="travelMode"]:checked')]
                 .map((input) => input.value);
+        }
+
+        function buildRequestHeaders() {
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+
+            if (API_KEY) {
+                headers['X-API-Key'] = API_KEY;
+            }
+
+            return headers;
         }
 
         function renderScores(cafe) {

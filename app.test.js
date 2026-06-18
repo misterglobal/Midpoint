@@ -10,6 +10,7 @@ const {
   computeMidpoint,
   computeMeetingScore,
   computeQualityScore,
+  isAuthorizedApiKey,
   validateSearchRequest,
 } = require('./app');
 
@@ -149,4 +150,10 @@ test('computeFullMeetingScore includes travel, safety, and parking signals', () 
   });
 
   assert.ok(stronger > weaker);
+});
+
+test('isAuthorizedApiKey accepts only configured keys', () => {
+  assert.equal(isAuthorizedApiKey('key-1', ['key-1', 'key-2']), true);
+  assert.equal(isAuthorizedApiKey('wrong-key', ['key-1', 'key-2']), false);
+  assert.equal(isAuthorizedApiKey('', ['key-1']), false);
 });
