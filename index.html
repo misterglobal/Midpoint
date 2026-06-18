@@ -62,7 +62,8 @@
             flex-direction: column;
         }
 
-        .form-section h2 {
+        .form-section h2,
+        .results-section h2 {
             font-size: 18px;
             margin-bottom: 20px;
             color: #333;
@@ -118,7 +119,7 @@
             margin-top: 10px;
         }
 
-        button:hover {
+        button:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
         }
@@ -136,14 +137,6 @@
         .results-section {
             display: flex;
             flex-direction: column;
-        }
-
-        .results-section h2 {
-            font-size: 18px;
-            margin-bottom: 20px;
-            color: #333;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 10px;
         }
 
         .result-content {
@@ -236,6 +229,23 @@
             font-weight: 600;
         }
 
+        .detail-line {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .detail-line span {
+            font-family: 'Courier New', monospace;
+        }
+
+        .map-link {
+            color: #667eea;
+            text-decoration: none;
+            margin-top: 8px;
+            display: inline-block;
+        }
+
         .cafes-list {
             display: flex;
             flex-direction: column;
@@ -309,47 +319,56 @@
             margin-bottom: 12px;
             font-weight: 600;
         }
+
+        .notice {
+            background: #fff3cd;
+            padding: 12px;
+            border-radius: 6px;
+            border-left: 4px solid #ffc107;
+            color: #856404;
+            font-size: 13px;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>☕ WeConnect</h1>
-            <p>Find the perfect café halfway between two locations</p>
+            <h1>WeConnect</h1>
+            <p>Find the perfect cafe halfway between two locations</p>
         </div>
 
         <div class="content">
-            <!-- Form Section -->
             <div class="form-section">
-                <h2>📍 Enter Locations</h2>
-                
+                <h2>Enter Locations</h2>
+
                 <div class="form-group">
                     <label for="address1">Address 1</label>
-                    <input 
-                        type="text" 
-                        id="address1" 
+                    <input
+                        type="text"
+                        id="address1"
                         placeholder="e.g., 123 Main St, New York, NY"
-                        value=""
+                        autocomplete="street-address"
                     >
                     <span class="help-text">Enter the first address</span>
                 </div>
 
                 <div class="form-group">
                     <label for="address2">Address 2</label>
-                    <input 
-                        type="text" 
-                        id="address2" 
+                    <input
+                        type="text"
+                        id="address2"
                         placeholder="e.g., 456 Park Ave, Boston, MA"
-                        value=""
+                        autocomplete="street-address"
                     >
                     <span class="help-text">Enter the second address</span>
                 </div>
 
                 <div class="form-group">
                     <label for="radius">Search Radius (meters)</label>
-                    <input 
-                        type="number" 
-                        id="radius" 
+                    <input
+                        type="number"
+                        id="radius"
                         placeholder="1500"
                         value="1500"
                         min="100"
@@ -361,30 +380,29 @@
 
                 <div class="form-group">
                     <label for="maxResults">Max Results</label>
-                    <input 
-                        type="number" 
-                        id="maxResults" 
+                    <input
+                        type="number"
+                        id="maxResults"
                         placeholder="20"
                         value="20"
                         min="1"
                         max="60"
                         step="1"
                     >
-                    <span class="help-text">Maximum number of cafés to display</span>
+                    <span class="help-text">Maximum number of cafes to display</span>
                 </div>
 
-                <button onclick="findCafes()" id="searchBtn">🔍 Find Cafés</button>
+                <button type="button" onclick="findCafes()" id="searchBtn">Find Cafes</button>
             </div>
 
-            <!-- Results Section -->
             <div class="results-section">
-                <h2>📊 Results</h2>
-                
+                <h2>Results</h2>
+
                 <div class="error" id="error"></div>
 
                 <div class="loading" id="loading">
                     <div class="spinner"></div>
-                    <p>Finding the perfect café...</p>
+                    <p>Finding the perfect cafe...</p>
                 </div>
 
                 <div class="result-content" id="results">
@@ -400,20 +418,20 @@
                                 <div class="coordinate-value" id="midLng">-</div>
                             </div>
                         </div>
-                        <div style="margin-top: 12px; font-size: 12px; color: #666;">
-                            <strong>Coordinates1:</strong> <span id="coord1" style="font-family: monospace;">-</span><br>
-                            <strong>Coordinates2:</strong> <span id="coord2" style="font-family: monospace;">-</span><br>
-                            <a id="mapLink" href="#" target="_blank" style="color: #667eea; text-decoration: none; margin-top: 8px; display: inline-block;">📍 View on Google Maps</a>
+                        <div class="detail-line">
+                            <strong>Coordinates 1:</strong> <span id="coord1">-</span><br>
+                            <strong>Coordinates 2:</strong> <span id="coord2">-</span><br>
+                            <a id="mapLink" class="map-link" href="#" target="_blank" rel="noopener noreferrer">View on Google Maps</a>
                         </div>
                     </div>
 
                     <div id="cafesContainer">
-                        <div class="cafes-count" id="cafesCount">0 cafés found</div>
+                        <div class="cafes-count" id="cafesCount">0 cafes found</div>
                         <div class="cafes-list" id="cafesList"></div>
                     </div>
                 </div>
 
-                <div class="no-results" id="noResults" style="display: none;">
+                <div class="no-results" id="noResults">
                     Results will appear here
                 </div>
             </div>
@@ -422,37 +440,41 @@
 
     <script src="config.js"></script>
     <script>
+        const REQUEST_TIMEOUT_MS = 12000;
         const urlParams = new URLSearchParams(window.location.search);
         const API_URL = urlParams.get('apiUrl') || window.API_URL;
+        const searchBtn = document.getElementById('searchBtn');
+
         if (!API_URL) {
-            throw new Error('API_URL is not defined. Set window.API_URL in config.js or pass ?apiUrl=...');
+            showError('The API URL is missing. Set window.API_URL in config.js or pass ?apiUrl=...');
         }
-        console.log('Using API URL:', API_URL);
 
         async function findCafes() {
+            if (!API_URL || searchBtn.disabled) {
+                return;
+            }
+
             const address1 = document.getElementById('address1').value.trim();
             const address2 = document.getElementById('address2').value.trim();
-            const radiusMeters = parseInt(document.getElementById('radius').value) || 1500;
-            const maxResults = parseInt(document.getElementById('maxResults').value) || 20;
+            const radiusMeters = readBoundedNumber('radius', 1500, 100, 50000);
+            const maxResults = readBoundedNumber('maxResults', 20, 1, 60);
 
-            // Validation
-            const errorEl = document.getElementById('error');
-            errorEl.classList.remove('show');
-            
+            hideError();
+
             if (!address1 || !address2) {
-                showError('Please enter both addresses');
+                showError('Please enter both addresses.');
                 return;
             }
 
             if (address1.length < 3 || address2.length < 3) {
-                showError('Addresses must be at least 3 characters long');
+                showError('Addresses must be at least 3 characters long.');
                 return;
             }
 
-            // Show loading
-            document.getElementById('loading').classList.add('show');
-            document.getElementById('results').classList.remove('show');
-            document.getElementById('noResults').style.display = 'none';
+            setLoading(true);
+
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
             try {
                 const response = await fetch(API_URL, {
@@ -466,90 +488,150 @@
                         radiusMeters,
                         maxResults,
                     }),
+                    signal: controller.signal,
                 });
 
-                console.log('Response status:', response.status);
+                const data = await readJsonResponse(response);
 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    console.error('Error response:', errorData);
-                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                    throw new Error(data.error || `Request failed with status ${response.status}.`);
                 }
 
-                const data = await response.json();
-                console.log('Success response:', data);
                 displayResults(data);
-
             } catch (err) {
-                console.error('Fetch error:', err);
-                showError(err.message || 'Failed to fetch results');
+                if (err.name === 'AbortError') {
+                    showError('The search took too long. Please try again.');
+                } else {
+                    showError(err.message || 'Failed to fetch results.');
+                }
             } finally {
-                document.getElementById('loading').classList.remove('show');
+                window.clearTimeout(timeoutId);
+                setLoading(false);
             }
         }
 
         function displayResults(data) {
-            console.log('Displaying results:', data);
-            
-            // Update midpoint
-            document.getElementById('midLat').textContent = data.midpoint.lat.toFixed(6);
-            document.getElementById('midLng').textContent = data.midpoint.lng.toFixed(6);
-            document.getElementById('coord1').textContent = `${data.coordinates.address1.lat.toFixed(6)}, ${data.coordinates.address1.lng.toFixed(6)}`;
-            document.getElementById('coord2').textContent = `${data.coordinates.address2.lat.toFixed(6)}, ${data.coordinates.address2.lng.toFixed(6)}`;
-            
-            // Create Google Maps link
-            const mapsUrl = `https://www.google.com/maps/search/cafes/@${data.midpoint.lat},${data.midpoint.lng},14z`;
-            document.getElementById('mapLink').href = mapsUrl;
-
-            // Display cafés
-            const cafesList = document.getElementById('cafesList');
-            const cafesCount = document.getElementById('cafesCount');
-
-            if (!data.cafes || data.cafes.length === 0) {
-                console.log('No cafes found');
-                cafesCount.textContent = '❌ No cafés found in this area';
-                cafesList.innerHTML = `
-                    <div style="background: #fff3cd; padding: 12px; border-radius: 6px; border-left: 4px solid #ffc107; color: #856404; font-size: 13px; line-height: 1.5;">
-                        <strong>No Results:</strong> The search location may be too remote (e.g., ocean, rural area), or Google Places doesn't have café data there. Try searching with locations that are closer together.
-                    </div>
-                `;
-                document.getElementById('results').classList.add('show');
+            if (!isValidResults(data)) {
+                showError('The server returned an unexpected response. Please try again.');
                 return;
             }
 
-            console.log(`Found ${data.cafes.length} cafes`);
-            cafesCount.textContent = `${data.cafes.length} cafés found`;
-            
-            const cafesHTML = data.cafes.map(cafe => {
-                console.log('Processing cafe:', cafe.name);
-                return `
+            document.getElementById('midLat').textContent = formatCoord(data.midpoint.lat);
+            document.getElementById('midLng').textContent = formatCoord(data.midpoint.lng);
+            document.getElementById('coord1').textContent = `${formatCoord(data.coordinates.address1.lat)}, ${formatCoord(data.coordinates.address1.lng)}`;
+            document.getElementById('coord2').textContent = `${formatCoord(data.coordinates.address2.lat)}, ${formatCoord(data.coordinates.address2.lng)}`;
+
+            const mapsUrl = `https://www.google.com/maps/search/cafes/@${data.midpoint.lat},${data.midpoint.lng},14z`;
+            document.getElementById('mapLink').href = mapsUrl;
+
+            const cafesList = document.getElementById('cafesList');
+            const cafesCount = document.getElementById('cafesCount');
+
+            if (data.cafes.length === 0) {
+                cafesCount.textContent = 'No cafes found in this area';
+                cafesList.innerHTML = `
+                    <div class="notice">
+                        <strong>No Results:</strong> The search location may be too remote, or Google Places may not have cafe data there. Try locations that are closer together or increase the search radius.
+                    </div>
+                `;
+                showResults();
+                return;
+            }
+
+            cafesCount.textContent = `${data.cafes.length} ${data.cafes.length === 1 ? 'cafe' : 'cafes'} found`;
+            cafesList.innerHTML = data.cafes.map(renderCafe).join('');
+            showResults();
+        }
+
+        function renderCafe(cafe) {
+            const name = escapeHtml(cafe.name || 'Unnamed cafe');
+            const address = escapeHtml(cafe.address || 'Address unavailable');
+            const rating = Number.isFinite(Number(cafe.rating))
+                ? `<span class="rating">Rating ${escapeHtml(String(cafe.rating))}</span> (${Number(cafe.user_ratings_total) || 0} reviews)`
+                : '<span class="rating">No rating yet</span>';
+            const priceLevel = Number.isInteger(cafe.price_level) && cafe.price_level > 0
+                ? `<span class="price-level">${'$'.repeat(Math.min(cafe.price_level, 4))}</span>`
+                : '';
+            const status = typeof cafe.open_now === 'boolean'
+                ? `
+                    <div class="status">
+                        Status: <span class="${cafe.open_now ? 'open' : 'closed'}">
+                            ${cafe.open_now ? 'Open' : 'Closed'}
+                        </span>
+                    </div>
+                `
+                : '';
+
+            return `
                 <div class="cafe-card">
-                    <div class="cafe-name">${escapeHtml(cafe.name)}</div>
+                    <div class="cafe-name">${name}</div>
                     <div class="cafe-info">
-                        <div>
-                            ${cafe.rating ? `<span class="rating">⭐ ${cafe.rating}</span> (${cafe.user_ratings_total || 0} reviews)` : '<span class="rating">No rating yet</span>'}
-                            ${cafe.price_level ? `<span class="price-level">${'$'.repeat(cafe.price_level)}</span>` : ''}
-                        </div>
-                        <div style="margin-top: 6px;">📍 ${escapeHtml(cafe.address)}</div>
-                        ${cafe.open_now !== undefined ? `
-                            <div class="status">
-                                Status: <span class="${cafe.open_now ? 'open' : 'closed'}">
-                                    ${cafe.open_now ? '✓ Open' : '✗ Closed'}
-                                </span>
-                            </div>
-                        ` : ''}
+                        <div>${rating}${priceLevel}</div>
+                        <div style="margin-top: 6px;">${address}</div>
+                        ${status}
                     </div>
                 </div>
-            `}).join('');
-            
-            cafesList.innerHTML = cafesHTML;
+            `;
+        }
+
+        async function readJsonResponse(response) {
+            try {
+                return await response.json();
+            } catch (err) {
+                return {};
+            }
+        }
+
+        function isValidResults(data) {
+            return data
+                && isCoord(data.midpoint)
+                && isCoord(data.coordinates?.address1)
+                && isCoord(data.coordinates?.address2)
+                && Array.isArray(data.cafes);
+        }
+
+        function isCoord(value) {
+            return Number.isFinite(value?.lat) && Number.isFinite(value?.lng);
+        }
+
+        function formatCoord(value) {
+            return Number(value).toFixed(6);
+        }
+
+        function readBoundedNumber(id, fallback, min, max) {
+            const input = document.getElementById(id);
+            const value = Number(input.value);
+            const bounded = Number.isFinite(value) ? Math.min(Math.max(Math.round(value), min), max) : fallback;
+            input.value = bounded;
+            return bounded;
+        }
+
+        function setLoading(isLoading) {
+            searchBtn.disabled = isLoading;
+            searchBtn.textContent = isLoading ? 'Searching...' : 'Find Cafes';
+            document.getElementById('loading').classList.toggle('show', isLoading);
+
+            if (isLoading) {
+                document.getElementById('results').classList.remove('show');
+                document.getElementById('noResults').style.display = 'none';
+            }
+        }
+
+        function showResults() {
             document.getElementById('results').classList.add('show');
+            document.getElementById('noResults').style.display = 'none';
         }
 
         function showError(message) {
             const errorEl = document.getElementById('error');
-            errorEl.textContent = '⚠️ ' + message;
+            errorEl.textContent = message;
             errorEl.classList.add('show');
+        }
+
+        function hideError() {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = '';
+            errorEl.classList.remove('show');
         }
 
         function escapeHtml(text) {
@@ -558,13 +640,16 @@
             return div.innerHTML;
         }
 
-        // Allow Enter key to submit
-        document.getElementById('address1').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') document.getElementById('address2').focus();
+        document.getElementById('address1').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('address2').focus();
+            }
         });
 
-        document.getElementById('address2').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') findCafes();
+        document.getElementById('address2').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                findCafes();
+            }
         });
     </script>
 </body>

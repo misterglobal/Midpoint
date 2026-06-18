@@ -25,47 +25,157 @@ const path = require('path');
 const axios = require('axios');
 const dotenv = require('dotenv');
 
-dotenv.config();
+dotenv.config({ quiet: true });
+dotenv.config({ path: '.env.local', quiet: true });
 
 const app = express();
 app.use(express.static(path.join(__dirname)));
 const PORT = process.env.PORT || 3000;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+const GOOGLE_REQUEST_TIMEOUT_MS = 8000;
+const DEFAULT_RADIUS_METERS = 1500;
+const DEFAULT_MAX_RESULTS = 20;
+const MIN_RADIUS_METERS = 100;
+const MAX_RADIUS_METERS = 50000;
+const MIN_RESULTS = 1;
+const MAX_RESULTS = 60;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 30;
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 if (!GOOGLE_MAPS_API_KEY) {
   console.warn('Warning: GOOGLE_MAPS_API_KEY is not set. Set it in a .env file.');
 }
 
-// Enable CORS for all origins
+class AppError extends Error {
+  constructor(message, statusCode = 500) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+// Enable CORS. Set ALLOWED_ORIGINS as a comma-separated list in production.
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const requestOrigin = req.headers.origin;
+  const allowedOrigin = allowedOrigins.length === 0
+    ? '*'
+    : allowedOrigins.includes(requestOrigin)
+      ? requestOrigin
+      : '';
+
+  if (allowedOrigin) {
+    res.header('Access-Control-Allow-Origin', allowedOrigin);
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Vary', 'Origin');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
+
+const rateLimitBuckets = new Map();
+
+app.use((req, res, next) => {
+  if (req.path !== '/midpoint' || req.method !== 'POST') {
+    return next();
+  }
+
+  const now = Date.now();
+  const key = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+  const bucket = rateLimitBuckets.get(key) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  }
+
+  bucket.count += 1;
+  rateLimitBuckets.set(key, bucket);
+
+  if (bucket.count > RATE_LIMIT_MAX_REQUESTS) {
+    return res.status(429).json({ error: 'Too many searches. Please wait a minute and try again.' });
+  }
+
+  return next();
+});
+
+function clampNumber(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.round(number), min), max);
+}
+
+function normalizeAddress(value, fieldName) {
+  if (typeof value !== 'string') {
+    throw new AppError(`${fieldName} must be text.`, 400);
+  }
+
+  const address = value.trim().replace(/\s+/g, ' ');
+  if (address.length < 3) {
+    throw new AppError(`${fieldName} must be at least 3 characters long.`, 400);
+  }
+
+  if (address.length > 300) {
+    throw new AppError(`${fieldName} must be 300 characters or less.`, 400);
+  }
+
+  return address;
+}
+
+function validateSearchRequest(body = {}) {
+  return {
+    address1: normalizeAddress(body.address1, 'Address 1'),
+    address2: normalizeAddress(body.address2, 'Address 2'),
+    radiusMeters: clampNumber(body.radiusMeters, DEFAULT_RADIUS_METERS, MIN_RADIUS_METERS, MAX_RADIUS_METERS),
+    maxResults: clampNumber(body.maxResults, DEFAULT_MAX_RESULTS, MIN_RESULTS, MAX_RESULTS),
+  };
+}
+
+function mapGoogleStatus(status, fallbackMessage) {
+  if (status === 'ZERO_RESULTS') {
+    return new AppError('We could not find one of those addresses. Try adding a city, province/state, or postal code.', 404);
+  }
+
+  if (status === 'REQUEST_DENIED') {
+    return new AppError('The map service rejected this request. Please check the Google Maps API key configuration.', 502);
+  }
+
+  if (status === 'OVER_QUERY_LIMIT') {
+    return new AppError('The map service quota has been reached. Please try again later.', 503);
+  }
+
+  return new AppError(fallbackMessage, 502);
+}
 
 // Helper: geocode an address to { lat, lng }
 async function geocodeAddress(address) {
   if (!address || typeof address !== 'string') {
-    throw new Error('Invalid address');
+    throw new AppError('Invalid address.', 400);
   }
   const url = 'https://maps.googleapis.com/maps/api/geocode/json';
   const params = {
     address,
     key: GOOGLE_MAPS_API_KEY,
   };
-  const resp = await axios.get(url, { params });
+  const resp = await axios.get(url, { params, timeout: GOOGLE_REQUEST_TIMEOUT_MS });
   if (resp.data.status !== 'OK' || !resp.data.results?.length) {
-    const msg = resp.data.error_message || resp.data.status || 'Geocoding failed';
-    const details = resp.data.results?.[0]?.partial_match ? 'Partial match' : undefined;
-    throw new Error(`Geocoding error for "${address}": ${msg}${details ? ' - ' + details : ''}`);
+    throw mapGoogleStatus(resp.data.status, `We could not geocode "${address}". Please check the address and try again.`);
   }
   const location = resp.data.results[0].geometry.location; // { lat, lng }
+
+  if (!Number.isFinite(location?.lat) || !Number.isFinite(location?.lng)) {
+    throw new AppError('The map service returned an invalid location.', 502);
+  }
+
   return { lat: location.lat, lng: location.lng };
 }
 
@@ -105,10 +215,9 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
     // rankby cannot be used with radius when set to distance; we keep radius to constrain area
   };
 
-  const resp = await axios.get(url, { params });
+  const resp = await axios.get(url, { params, timeout: GOOGLE_REQUEST_TIMEOUT_MS });
   if (resp.data.status !== 'OK' && resp.data.status !== 'ZERO_RESULTS') {
-    const msg = resp.data.error_message || resp.data.status || 'Places search failed';
-    throw new Error(`Places API error: ${msg}`);
+    throw mapGoogleStatus(resp.data.status, 'The cafe search failed. Please try again in a moment.');
   }
 
   const results = (resp.data.results || []).slice(0, maxResults).map((r) => ({
@@ -128,10 +237,7 @@ async function findNearbyCafes({ lat, lng }, radiusMeters = 1500, maxResults = 2
 
 app.post('/midpoint', async (req, res) => {
   try {
-    const { address1, address2, radiusMeters, maxResults } = req.body || {};
-    if (!address1 || !address2) {
-      return res.status(400).json({ error: 'Both address1 and address2 are required.' });
-    }
+    const { address1, address2, radiusMeters, maxResults } = validateSearchRequest(req.body);
 
     const [coord1, coord2] = await Promise.all([
       geocodeAddress(address1),
@@ -142,26 +248,44 @@ app.post('/midpoint', async (req, res) => {
 
     const cafes = await findNearbyCafes(
       midpoint,
-      Number.isFinite(radiusMeters) ? radiusMeters : 1500,
-      Number.isFinite(maxResults) ? maxResults : 20
+      radiusMeters,
+      maxResults
     );
 
     return res.json({
       input: { address1, address2 },
+      options: { radiusMeters, maxResults },
       coordinates: { address1: coord1, address2: coord2 },
       midpoint,
       cafes,
     });
   } catch (err) {
-    const status = 502; // Bad gateway for upstream API errors
-    return res.status(status).json({ error: err.message || 'Unknown error' });
+    if (err.code === 'ECONNABORTED') {
+      return res.status(504).json({ error: 'The map service took too long to respond. Please try again.' });
+    }
+
+    const status = err.statusCode || 502;
+    return res.status(status).json({ error: err.message || 'Something went wrong while finding cafes.' });
   }
+});
+
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
 });
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server listening on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = {
+  app,
+  clampNumber,
+  computeMidpoint,
+  validateSearchRequest,
+};
