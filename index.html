@@ -420,9 +420,13 @@
         </div>
     </div>
 
+    <script src="config.js"></script>
     <script>
         const urlParams = new URLSearchParams(window.location.search);
-        const API_URL = urlParams.get('apiUrl') || window.API_URL || 'https://midpoint-production-1f3b.up.railway.app/midpoint';
+        const API_URL = urlParams.get('apiUrl') || window.API_URL;
+        if (!API_URL) {
+            throw new Error('API_URL is not defined. Set window.API_URL in config.js or pass ?apiUrl=...');
+        }
         console.log('Using API URL:', API_URL);
 
         async function findCafes() {
