@@ -21,12 +21,14 @@
 */
 
 const express = require('express');
+const path = require('path');
 const axios = require('axios');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 const app = express();
+app.use(express.static(path.join(__dirname)));
 const PORT = process.env.PORT || 3000;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -157,7 +159,7 @@ app.post('/midpoint', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', endpoint: '/midpoint', method: 'POST' });
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
