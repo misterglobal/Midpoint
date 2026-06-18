@@ -5,4 +5,4 @@ window.API_URL = 'https://midpoint-production-1f3b.up.railway.app/midpoint';
 
 // Optional: only set this for private/internal deployments.
 // Public browser apps expose this value to users, so use server-to-server keys for real customers.
-window.API_KEY = '';
+window.API_KEY = '12345-ABCDE-67890-FGHIJ';
